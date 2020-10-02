@@ -18,12 +18,41 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class Catalog {
 
+    public static class CatRecord {
+        public DbFile file;
+        public String name;
+        public String pkeyField;
+
+        /**
+         * Constructor for CatRecord, to store other data.
+         * @param file the contents of the table to add
+         * @param name the name of the table
+         * @param pkeyField the name of the primary key field
+         */
+        public CatRecord(DbFile file, String name, String pkeyField) {
+            this.file = file;
+            this.name = name;
+            this.pkeyField = pkeyField;
+        }
+    }
+
+    /*
+     mapId2Record: Map TableId to the CatRecord
+     */
+    private final Map<Integer, CatRecord> mapId2Record;
+
+    /*
+     mapName2Id: Map Name to TableId.
+     */
+    private final Map<String, Integer> mapName2Id;
+
     /**
      * Constructor.
      * Creates a new, empty catalog.
      */
     public Catalog() {
-        // some code goes here
+        this.mapName2Id = new ConcurrentHashMap<>();
+        this.mapId2Record = new ConcurrentHashMap<>();
     }
 
     /**
@@ -36,7 +65,16 @@ public class Catalog {
      * @param pkeyField the name of the primary key field
      */
     public void addTable(DbFile file, String name, String pkeyField) {
-        // some code goes here
+        if (file == null) {
+            throw new IllegalArgumentException("DBFile cannot be null");
+        }
+        CatRecord catRecord = new CatRecord(file, name, pkeyField);
+        int id = file.getId();
+        if (this.mapName2Id.containsKey(name)) {
+            this.mapId2Record.remove(this.mapName2Id.get(name));
+        }
+        this.mapName2Id.put(name, id);
+        this.mapId2Record.put(id, catRecord);
     }
 
     public void addTable(DbFile file, String name) {
@@ -59,8 +97,13 @@ public class Catalog {
      * @throws NoSuchElementException if the table doesn't exist
      */
     public int getTableId(String name) throws NoSuchElementException {
-        // some code goes here
-        return 0;
+        if (name == null) {
+            throw new NoSuchElementException();
+        } else {
+            Integer ans = this.mapName2Id.get(name);
+            if (ans == null) throw new NoSuchElementException();
+            return ans;
+        }
     }
 
     /**
@@ -70,8 +113,7 @@ public class Catalog {
      * @throws NoSuchElementException if the table doesn't exist
      */
     public TupleDesc getTupleDesc(int tableid) throws NoSuchElementException {
-        // some code goes here
-        return null;
+        return this.mapId2Record.get(tableid).file.getTupleDesc();
     }
 
     /**
@@ -81,28 +123,25 @@ public class Catalog {
      *     function passed to addTable
      */
     public DbFile getDatabaseFile(int tableid) throws NoSuchElementException {
-        // some code goes here
-        return null;
+        return this.mapId2Record.get(tableid).file;
     }
 
     public String getPrimaryKey(int tableid) {
-        // some code goes here
-        return null;
+        return this.mapId2Record.get(tableid).pkeyField;
     }
 
     public Iterator<Integer> tableIdIterator() {
-        // some code goes here
-        return null;
+        return this.mapId2Record.keySet().iterator();
     }
 
     public String getTableName(int id) {
-        // some code goes here
-        return null;
+        return this.mapId2Record.get(id).name;
     }
     
     /** Delete all tables from the catalog */
     public void clear() {
-        // some code goes here
+        this.mapId2Record.clear();
+        this.mapName2Id.clear();
     }
     
     /**

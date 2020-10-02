@@ -1,8 +1,11 @@
 package simpledb;
 
 import java.io.Serializable;
+import java.security.InvalidParameterException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.StringJoiner;
 
 /**
  * Tuple maintains information about the contents of a tuple. Tuples have a
@@ -12,6 +15,9 @@ import java.util.Iterator;
 public class Tuple implements Serializable {
 
     private static final long serialVersionUID = 1L;
+    private TupleDesc td;
+    private ArrayList<Field> tupFieldList;
+    private RecordId tup_rid = null;
 
     /**
      * Create a new tuple with the specified schema (type).
@@ -21,15 +27,14 @@ public class Tuple implements Serializable {
      *            instance with at least one field.
      */
     public Tuple(TupleDesc td) {
-        // some code goes here
+        this.resetTupleDesc(td);
     }
 
     /**
      * @return The TupleDesc representing the schema of this tuple.
      */
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        return this.td;
     }
 
     /**
@@ -37,8 +42,7 @@ public class Tuple implements Serializable {
      *         be null.
      */
     public RecordId getRecordId() {
-        // some code goes here
-        return null;
+        return this.tup_rid;
     }
 
     /**
@@ -48,7 +52,7 @@ public class Tuple implements Serializable {
      *            the new RecordId for this tuple.
      */
     public void setRecordId(RecordId rid) {
-        // some code goes here
+        this.tup_rid = rid;
     }
 
     /**
@@ -60,7 +64,16 @@ public class Tuple implements Serializable {
      *            new value for the field.
      */
     public void setField(int i, Field f) {
-        // some code goes here
+        if (i < 0 || i >= this.tupFieldList.size()) {
+            throw new IllegalArgumentException("invalid i");
+        }
+        Type the_type = this.td.getFieldType(i);
+        if ((the_type == Type.INT_TYPE && f instanceof IntField) ||
+            (the_type == Type.STRING_TYPE && f instanceof StringField)) {
+            this.tupFieldList.set(i, f);
+        } else {
+            throw new IllegalArgumentException("The field type doesn't match that in TupleDesc.");
+        }
     }
 
     /**
@@ -70,8 +83,7 @@ public class Tuple implements Serializable {
      *            field index to return. Must be a valid index.
      */
     public Field getField(int i) {
-        // some code goes here
-        return null;
+        return this.tupFieldList.get(i);
     }
 
     /**
@@ -83,8 +95,11 @@ public class Tuple implements Serializable {
      * where \t is any whitespace (except a newline)
      */
     public String toString() {
-        // some code goes here
-        throw new UnsupportedOperationException("Implement this");
+        StringJoiner joiner = new StringJoiner("\t");
+        for (Field field: this.tupFieldList) {
+            joiner.add(field.toString());
+        }
+        return joiner.toString();
     }
 
     /**
@@ -93,8 +108,7 @@ public class Tuple implements Serializable {
      * */
     public Iterator<Field> fields()
     {
-        // some code goes here
-        return null;
+        return this.tupFieldList.iterator();
     }
 
     /**
@@ -102,6 +116,10 @@ public class Tuple implements Serializable {
      * */
     public void resetTupleDesc(TupleDesc td)
     {
-        // some code goes here
+        this.td = td;
+        this.tupFieldList = new ArrayList<>(td.numFields());
+        for (int i = 0; i < td.numFields(); ++i) {
+            tupFieldList.add(null);
+        }
     }
 }

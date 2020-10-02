@@ -7,7 +7,9 @@ import java.util.*;
  * TupleDesc describes the schema of a tuple.
  */
 public class TupleDesc implements Serializable {
-
+    private ArrayList<TDItem> tdItems;
+    private boolean has_names = false;
+    private int pre_calced_Size = -1;
     /**
      * A help class to facilitate organizing the information of each field
      * */
@@ -41,8 +43,7 @@ public class TupleDesc implements Serializable {
      *        that are included in this TupleDesc
      * */
     public Iterator<TDItem> iterator() {
-        // some code goes here
-        return null;
+        return this.tdItems.iterator();
     }
 
     private static final long serialVersionUID = 1L;
@@ -59,7 +60,19 @@ public class TupleDesc implements Serializable {
      *            be null.
      */
     public TupleDesc(Type[] typeAr, String[] fieldAr) {
-        // some code goes here
+        if (typeAr.length < 1) {
+            throw new IllegalArgumentException("typeAr must contains at least 1 entry.");
+        }
+        if (typeAr.length != fieldAr.length) {
+            throw new IllegalArgumentException("typeAr and fieldAr must have the same length.");
+        }
+        this.tdItems = new ArrayList<>();
+        int len = typeAr.length;
+        for (int i = 0; i < len; ++i) {
+            TDItem tdItem = new TDItem(typeAr[i], fieldAr[i]);
+            this.tdItems.add(tdItem);
+        }
+        this.PreInitialize();
     }
 
     /**
@@ -71,15 +84,48 @@ public class TupleDesc implements Serializable {
      *            TupleDesc. It must contain at least one entry.
      */
     public TupleDesc(Type[] typeAr) {
-        // some code goes here
+        if (typeAr.length < 1) {
+            throw new IllegalArgumentException("typeAr must contains at least 1 entry.");
+        }
+        this.tdItems = new ArrayList<>();
+        for (Type type : typeAr) {
+            TDItem tdItem = new TDItem(type, null);
+            this.tdItems.add(tdItem);
+        }
+        this.PreInitialize();
+    }
+
+    /**
+     * Constructor only used in merge function.
+     * @param list1 array from the 1st TupleDesc object.
+     * @param list2 array from the 2nd TupleDesc object.
+     */
+    private TupleDesc(ArrayList<TDItem> list1, ArrayList<TDItem> list2) {
+        this.tdItems = new ArrayList<>();
+        this.tdItems.addAll(list1);
+        this.tdItems.addAll(list2);
+        this.PreInitialize();
+    }
+
+    /**
+     * Utility used to initialize some fields useful to some member functions.
+     */
+    private void PreInitialize() {
+        this.pre_calced_Size = 0;
+        for (TDItem tdItem: this.tdItems) {
+            Type type = tdItem.fieldType;
+            this.pre_calced_Size += type.getLen();
+            if (!this.has_names && tdItem.fieldName != null) {
+                this.has_names = true;
+            }
+        }
     }
 
     /**
      * @return the number of fields in this TupleDesc
      */
     public int numFields() {
-        // some code goes here
-        return 0;
+        return this.tdItems.size();
     }
 
     /**
@@ -92,8 +138,7 @@ public class TupleDesc implements Serializable {
      *             if i is not a valid field reference.
      */
     public String getFieldName(int i) throws NoSuchElementException {
-        // some code goes here
-        return null;
+        return this.tdItems.get(i).fieldName;
     }
 
     /**
@@ -107,8 +152,7 @@ public class TupleDesc implements Serializable {
      *             if i is not a valid field reference.
      */
     public Type getFieldType(int i) throws NoSuchElementException {
-        // some code goes here
-        return null;
+        return this.tdItems.get(i).fieldType;
     }
 
     /**
@@ -121,8 +165,17 @@ public class TupleDesc implements Serializable {
      *             if no field with a matching name is found.
      */
     public int fieldNameToIndex(String name) throws NoSuchElementException {
-        // some code goes here
-        return 0;
+        if (!this.has_names) {
+            throw new NoSuchElementException();
+        }
+        int count = 0;
+        for (TDItem tdItem : this.tdItems) {
+            if (tdItem.fieldName.equals(name)) {
+                return count;
+            }
+            ++count;
+        }
+        throw new NoSuchElementException();
     }
 
     /**
@@ -130,8 +183,8 @@ public class TupleDesc implements Serializable {
      *         Note that tuples from a given TupleDesc are of a fixed size.
      */
     public int getSize() {
-        // some code goes here
-        return 0;
+        assert(this.pre_calced_Size != -1);
+        return this.pre_calced_Size;
     }
 
     /**
@@ -145,8 +198,7 @@ public class TupleDesc implements Serializable {
      * @return the new TupleDesc
      */
     public static TupleDesc merge(TupleDesc td1, TupleDesc td2) {
-        // some code goes here
-        return null;
+        return new TupleDesc(td1.tdItems, td2.tdItems);
     }
 
     /**
@@ -159,7 +211,22 @@ public class TupleDesc implements Serializable {
      * @return true if the object is equal to this TupleDesc.
      */
     public boolean equals(Object o) {
-        // some code goes here
+        if (o instanceof TupleDesc) {
+            if (o == this) {
+                return true;
+            } else{
+                TupleDesc tdo = (TupleDesc) o;
+                if (this.getSize() == tdo.getSize() &&
+                    this.tdItems.size() == tdo.tdItems.size()) {
+                    for (int i = 0; i < this.tdItems.size(); ++i) {
+                        if (this.tdItems.get(i).fieldType != tdo.tdItems.get(i).fieldType) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
         return false;
     }
 
@@ -177,7 +244,10 @@ public class TupleDesc implements Serializable {
      * @return String describing this descriptor.
      */
     public String toString() {
-        // some code goes here
-        return "";
+        StringBuilder sb = new StringBuilder();
+        for (TDItem tdItem : this.tdItems) {
+            sb.append(tdItem.toString());
+        }
+        return sb.toString();
     }
 }

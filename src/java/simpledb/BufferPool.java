@@ -2,6 +2,8 @@ package simpledb;
 
 import java.io.*;
 
+import java.nio.Buffer;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -26,27 +28,39 @@ public class BufferPool {
     constructor instead. */
     public static final int DEFAULT_PAGES = 50;
 
+    /*
+     poolPages: used to store all the buffers.
+     */
+    private final Page[] poolPages;
+    /*
+    isPageUsed: whether the buffer slots is valid or invalid.
+     */
+    private boolean[] isPageUsed;
+    private Map<PageId, Integer> mapPid2Slotnum;
+
     /**
      * Creates a BufferPool that caches up to numPages pages.
      *
      * @param numPages maximum number of pages in this buffer pool.
      */
     public BufferPool(int numPages) {
-        // some code goes here
+        this.poolPages = new Page[numPages];
+        this.isPageUsed = new boolean[numPages];
+        this.mapPid2Slotnum = new HashMap<>();
     }
-    
+
     public static int getPageSize() {
-      return pageSize;
+        return pageSize;
     }
-    
-    // THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!
+
     public static void setPageSize(int pageSize) {
     	BufferPool.pageSize = pageSize;
+    	System.out.println("THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!");
     }
-    
-    // THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!
+
     public static void resetPageSize() {
     	BufferPool.pageSize = PAGE_SIZE;
+        System.out.println("THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!");
     }
 
     /**
@@ -66,8 +80,24 @@ public class BufferPool {
      */
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        if (this.mapPid2Slotnum.containsKey(pid)) {
+            int slotNum = this.mapPid2Slotnum.get(pid);
+            return this.poolPages[slotNum];
+        } else {
+            int tabId = pid.getTableId();
+            DbFile dbFile = Database.getCatalog().getDatabaseFile(tabId);
+            Page newReadPage = dbFile.readPage(pid);
+            // now we need to store the page into the buffer
+            for (int i = 0; i < isPageUsed.length; ++i) {
+                if (!this.isPageUsed[i]) {
+                    this.isPageUsed[i] = true;
+                    this.poolPages[i] = newReadPage;
+                    this.mapPid2Slotnum.put(pid, i);
+                    return newReadPage;
+                }
+            }
+            throw new DbException("need the LFU algorithm to evict pages.");
+        }
     }
 
     /**
