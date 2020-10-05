@@ -25,5 +25,7 @@
         <SOURCES />
       </library>
     </orderEntry>
+    <orderEntry type="library" name="jline-0.9.94" level="project" />
+    <orderEntry type="library" name="zql" level="project" />
   </component>
 </module>
