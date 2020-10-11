@@ -195,9 +195,9 @@ public class HeapPage implements Page {
         DataOutputStream dos = new DataOutputStream(baos);
 
         // create the header of the page
-        for (int i=0; i<header.length; i++) {
+        for (byte b : header) {
             try {
-                dos.writeByte(header[i]);
+                dos.writeByte(b);
             } catch (IOException e) {
                 // this really shouldn't happen
                 e.printStackTrace();
