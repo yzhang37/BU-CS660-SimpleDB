@@ -1,6 +1,8 @@
 package simpledb;
 
+import javax.xml.crypto.Data;
 import java.io.*;
+import java.nio.Buffer;
 import java.util.*;
 
 /**
@@ -69,6 +71,7 @@ public class HeapFile implements DbFile {
             ranFile.seek(offset);
             byte[] b = new byte[pageSize];
             ranFile.read(b);
+            ranFile.close();
             return new HeapPage((HeapPageId)pid, b);
         }
         catch (Exception ex) {
@@ -78,8 +81,12 @@ public class HeapFile implements DbFile {
 
     // see DbFile.java for javadocs
     public void writePage(Page page) throws IOException {
-        // some code goes here
-        // not necessary for lab1
+        int pageSize = BufferPool.getPageSize();
+        int offset = page.getId().pageNumber() * pageSize;
+        RandomAccessFile ranFile = new RandomAccessFile(this.f, "w");
+        ranFile.seek(offset);
+        ranFile.write(page.getPageData());
+        ranFile.close();
     }
 
     /**
@@ -94,17 +101,61 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public ArrayList<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        return null;
-        // not necessary for lab1
+        ArrayList<Page> ret_list = new ArrayList<>();
+        // now we can fetch pages from BufferPool
+        // ==============================================================================
+        // * since we may modify the page, so we must get the page from BufferPool with
+        //   perms sent.
+        // * we first try to find exists non-full pages.
+        for (int i = 0; i < this.numPages(); ++i) {
+            Page page = Database.getBufferPool().getPage(tid, new HeapPageId(this.getId(), i), null);
+            if (!(page instanceof HeapPage)) {
+                throw new DbException("Not a HeapPage, but this shouldn't happen!");
+            }
+            HeapPage heapPage = (HeapPage)page;
+            // here we directly call heapPage.insertTuple. Since if it's full,
+            // a DbException will be thrown from itself.
+            try {
+                heapPage.insertTuple(t);
+                heapPage.markDirty(true, tid);
+                ret_list.add(heapPage);
+                return ret_list;
+            } catch (DbException ex) {}
+        }
+        // * if we cannot find non-full existing pages. Then we have to create a new one.
+        //   First we write the page to the disk, and the load it to the BufferPool.
+        byte[] newPageData = new byte[BufferPool.getPageSize()];
+        Arrays.fill(newPageData, (byte)0);
+        HeapPageId newHpPgId = new HeapPageId(this.getId(), this.numPages());
+        HeapPage newHpPage = new HeapPage(newHpPgId, newPageData);
+        this.writePage(newHpPage);
+        // now we try to use the getPage function from BufferPool to load the new page into it.
+        HeapPage newPage = (HeapPage)Database.getBufferPool().getPage(tid, newHpPgId, null);
+        // here if DbException still throws, there must be some error
+        // that this function cannot handle.
+        newPage.insertTuple(t);
+        ret_list.add(newPage);
+        return ret_list;
     }
 
     // see DbFile.java for javadocs
     public ArrayList<Page> deleteTuple(TransactionId tid, Tuple t) throws DbException,
             TransactionAbortedException {
-        // some code goes here
-        return null;
-        // not necessary for lab1
+        ArrayList<Page> ret_list = new ArrayList<>();
+        for (int i = 0; i < this.numPages(); ++i) {
+            Page page = Database.getBufferPool().getPage(tid, new HeapPageId(this.getId(), i), null);
+            if (!(page instanceof HeapPage)) {
+                throw new DbException("Not a HeapPage, but this shouldn't happen!");
+            }
+            HeapPage heapPage = (HeapPage)page;
+            try {
+                heapPage.deleteTuple(t);
+                heapPage.markDirty(true, tid);
+                ret_list.add(heapPage);
+                return ret_list;
+            } catch (DbException ex) {}
+        }
+        throw new DbException("HeapFile: Failed to Delete Tuple, due to tuple not found.");
     }
 
     // see DbFile.java for javadocs

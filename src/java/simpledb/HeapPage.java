@@ -18,6 +18,11 @@ public class HeapPage implements Page {
     final byte[] header;
     final Tuple[] tuples;
     final int numSlots;
+    private int usedSlots;
+
+    // isDirty: mark whether this page is dirty or not;
+    boolean dirty = false;
+    TransactionId tid = null;
 
     byte[] oldData;
     private final Byte oldDataLock=new Byte((byte)0);
@@ -48,7 +53,8 @@ public class HeapPage implements Page {
         header = new byte[getHeaderSize()];
         for (int i=0; i<header.length; i++)
             header[i] = dis.readByte();
-        
+        this.usedSlots = this.preCalcUsedSlots();
+
         tuples = new Tuple[numSlots];
         try{
             // allocate and read the actual records of this page
@@ -77,6 +83,33 @@ public class HeapPage implements Page {
      */
     private int getHeaderSize() {
         return (int)Math.ceil(((double)this.getNumTuples()) / 8);
+    }
+
+    // MARK: This function is added by me.
+    /**
+     * Pre-calc the used slots from the Header
+     * @return the value calculated via the current header array.
+     */
+    private int preCalcUsedSlots() {
+        int used_count = 0;
+        int i = 0;
+        for (; i < this.header.length - 1; ++i) {
+            int byteNum = this.header[i] & 0xFF;
+            while (byteNum != 0) {
+                if ((byteNum & 1) != 0)
+                    used_count++;
+                byteNum >>= 1;
+            }
+        }
+        // now we handle the final header byte, which might not be full.
+        int lastByteNum = this.header[i] & 0xFF, final_left = this.numSlots % 8;
+        while (final_left > 0 && lastByteNum != 0) {
+            if ((lastByteNum & 1) != 0)
+                used_count++;
+            lastByteNum >>= 1;
+            final_left--;
+        }
+        return used_count;
     }
 
     /** Return a view of this page before it was modified
@@ -239,8 +272,18 @@ public class HeapPage implements Page {
      * @param t The tuple to delete
      */
     public void deleteTuple(Tuple t) throws DbException {
-        // some code goes here
-        // not necessary for lab1
+        // here we need to first find the Tuple's place
+        for (int i = 0; i < this.numSlots; ++i) {
+            if (this.isSlotUsed(i)) {
+                if (t.equals(this.tuples[i])) {
+                    this.tuples[i] = null;
+                    this.markSlotUsed(i, false);
+                    t.setRecordId(null);
+                    return;
+                }
+            }
+        }
+        throw new DbException("Cannot find tuple.");
     }
 
     /**
@@ -251,8 +294,25 @@ public class HeapPage implements Page {
      * @param t The tuple to add.
      */
     public void insertTuple(Tuple t) throws DbException {
-        // some code goes here
-        // not necessary for lab1
+        if (!(t.getTupleDesc().equals(this.td))) {
+            throw new DbException("TupleDesc doesn't match");
+        }
+        if (this.getNumEmptySlots() == 0) {
+            throw new DbException("Page is full.");
+        }
+        for (int i = 0; i < this.numSlots; ++i) {
+            // find the corresponding place,
+            if (!this.isSlotUsed(i)) {
+                // register RecordId inside the tuple.
+                t.setRecordId(new RecordId(this.getId(), i));
+                // "copy" the tuple
+                this.tuples[i] = t;
+                // mark used.
+                this.markSlotUsed(i, true);
+                break;
+            }
+        }
+        throw new DbException("Page should be full.");
     }
 
     /**
@@ -260,41 +320,31 @@ public class HeapPage implements Page {
      * that did the dirtying
      */
     public void markDirty(boolean dirty, TransactionId tid) {
-        // some code goes here
-	// not necessary for lab1
+        if (dirty) {
+            this.dirty = true;
+            this.tid = tid;
+        } else {
+            this.dirty = false;
+            this.tid = null;
+        }
     }
 
     /**
      * Returns the tid of the transaction that last dirtied this page, or null if the page is not dirty
      */
     public TransactionId isDirty() {
-        // some code goes here
-	// Not necessary for lab1
-        return null;
+        return this.tid;
     }
 
     /**
      * Returns the number of empty slots on this page.
      */
     public int getNumEmptySlots() {
-        int empty_count = numSlots;
+        // FIX:
+        // I think this function is of low efficiency.
         // because in the last byte, some bit might not be used. So
         // use this count to solve that problem.
-        int count = numSlots;
-        for (byte b: this.header) {
-            int bInt = b & 0xFF;
-            while (bInt != 0 && count > 0) {
-                if ((bInt & 1) != 0) {
-                    empty_count--;
-                }
-                bInt >>= 1;
-                count--;
-            }
-            if (count <= 0) {
-                break;
-            }
-        }
-        return empty_count;
+        return this.numSlots - this.usedSlots;
     }
 
     /**
@@ -312,11 +362,20 @@ public class HeapPage implements Page {
      */
     private void markSlotUsed(int i, boolean value) {
         int a = i / 8, b = i % 8;
+        // get the original value.
+        boolean old = this.isSlotUsed(i);
         int sub = 1 << b;
         if (value) {
             this.header[a] = (byte)(this.header[a] | sub);
+            if (!old) {
+                // Because the original is not used, then we must make usedSlots + 1
+                this.usedSlots++;
+            }
         } else {
             this.header[a] = (byte)(this.header[a] & ~sub);
+            if (old) {
+                this.usedSlots--;
+            }
         }
     }
 

@@ -2,9 +2,10 @@ package simpledb;
 
 import java.io.*;
 
-import java.nio.Buffer;
-import java.util.*;
+import java.util.Date;
+import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -28,15 +29,59 @@ public class BufferPool {
     constructor instead. */
     public static final int DEFAULT_PAGES = 50;
 
+    // MARK: New Implemented LFU algorithm!
+    private class LFUNode implements Comparable<LFUNode> {
+        private int count;
+        private final Date time;
+        private final PageId key;
+        private final Page value;
+
+        LFUNode(int count, Date time, PageId key, Page value) {
+            this.count = count;
+            this.time = time;
+            this.key = key;
+            this.value = value;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            else if (o instanceof LFUNode) {
+                LFUNode lObj = (LFUNode)o;
+                return this.count == lObj.count && this.time.equals(lObj.time);
+            } else return false;
+        }
+
+        @Override
+        public int compareTo(LFUNode o) {
+            return 0;
+        }
+
+        public int getCount() {
+            return this.count;
+        }
+
+        public int incrementCount() {
+            this.count++;
+            return this.count;
+        }
+
+        public PageId getPageId() {
+            return this.key;
+        }
+
+        public Page getPage() {
+            return this.value;
+        }
+    }
+
     /*
-     poolPages: used to store all the buffers.
+     lfuManPoolMap: used to store all the buffers. Man means Manage
+     lfuManSet: A set used to automatically sort node using Tree.
      */
-    private final Page[] poolPages;
-    /*
-    isPageUsed: whether the buffer slots is valid or invalid.
-     */
-    private boolean[] isPageUsed;
-    private Map<PageId, Integer> mapPid2Slotnum;
+    private ConcurrentHashMap<PageId, LFUNode> lfuManPoolMap;
+    private ConcurrentSkipListSet<LFUNode> lfuManSet;
+    private final int pool_max_size;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -44,9 +89,9 @@ public class BufferPool {
      * @param numPages maximum number of pages in this buffer pool.
      */
     public BufferPool(int numPages) {
-        this.poolPages = new Page[numPages];
-        this.isPageUsed = new boolean[numPages];
-        this.mapPid2Slotnum = new HashMap<>();
+        this.pool_max_size = numPages;
+        this.lfuManPoolMap = new ConcurrentHashMap<>();
+        this.lfuManSet = new ConcurrentSkipListSet<>();
     }
 
     public static int getPageSize() {
@@ -80,23 +125,27 @@ public class BufferPool {
      */
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        if (this.mapPid2Slotnum.containsKey(pid)) {
-            int slotNum = this.mapPid2Slotnum.get(pid);
-            return this.poolPages[slotNum];
+        if (this.lfuManPoolMap.containsKey(pid)) {
+            // we get the old key of PageId. So we must update it's use count!
+            LFUNode pageLfuData = this.lfuManPoolMap.get(pid);
+            this.lfuManSet.remove(pageLfuData);
+            // count + 1
+            pageLfuData.incrementCount();
+            this.lfuManSet.add(pageLfuData);
+            return pageLfuData.getPage();
         } else {
-            int tabId = pid.getTableId();
-            DbFile dbFile = Database.getCatalog().getDatabaseFile(tabId);
-            Page newReadPage = dbFile.readPage(pid);
-            // now we need to store the page into the buffer
-            for (int i = 0; i < isPageUsed.length; ++i) {
-                if (!this.isPageUsed[i]) {
-                    this.isPageUsed[i] = true;
-                    this.poolPages[i] = newReadPage;
-                    this.mapPid2Slotnum.put(pid, i);
-                    return newReadPage;
-                }
+            // we didn't find, so we call Table's File to read the page.
+            int tableId = pid.getTableId();
+            DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
+            Page readPage = dbFile.readPage(pid);
+            if (this.lfuManPoolMap.size() >= this.pool_max_size) {
+                // exceed max size. So we must evict a page.
+                this.evictPage();
             }
-            throw new DbException("need the LFU algorithm to evict pages.");
+            LFUNode pageLfuData = new LFUNode(1, new Date(), pid, readPage);
+            this.lfuManPoolMap.put(pid, pageLfuData);
+            this.lfuManSet.add(pageLfuData);
+            return readPage;
         }
     }
 
@@ -161,8 +210,8 @@ public class BufferPool {
      */
     public void insertTuple(TransactionId tid, int tableId, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        // not necessary for lab1
+        DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
+        dbFile.insertTuple(tid, t);
     }
 
     /**
@@ -180,8 +229,9 @@ public class BufferPool {
      */
     public  void deleteTuple(TransactionId tid, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        // not necessary for lab1
+        int tableId = t.getRecordId().getPageId().getTableId();
+        DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
+        dbFile.deleteTuple(tid, t);
     }
 
     /**
@@ -190,9 +240,7 @@ public class BufferPool {
      *     break simpledb if running in NO STEAL mode.
      */
     public synchronized void flushAllPages() throws IOException {
-        // some code goes here
-        // not necessary for lab1
-
+        // TODO: flushAllPages() code goes here
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -204,8 +252,7 @@ public class BufferPool {
         are removed from the cache so they can be reused safely
     */
     public synchronized void discardPage(PageId pid) {
-        // some code goes here
-        // not necessary for lab1
+        // TODO: discardPage(PageId) code goes here
     }
 
     /**
@@ -213,14 +260,20 @@ public class BufferPool {
      * @param pid an ID indicating the page to flush
      */
     private synchronized  void flushPage(PageId pid) throws IOException {
-        // some code goes here
-        // not necessary for lab1
+        // first find the page
+        // then find the corresponding Table.
+        // then: write the page to the correct position in Table's related File.
+        // then: mark the page as non-dirty.
+        Page page = this.lfuManPoolMap.get(pid).getPage();
+        int tableId = pid.getTableId();
+        DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
+        dbFile.writePage(page);
+        page.markDirty(false, null);
     }
 
     /** Write all pages of the specified transaction to disk.
      */
     public synchronized  void flushPages(TransactionId tid) throws IOException {
-        // some code goes here
         // not necessary for lab1|lab2
     }
 
@@ -229,8 +282,15 @@ public class BufferPool {
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
     private synchronized  void evictPage() throws DbException {
-        // some code goes here
-        // not necessary for lab1
+        LFUNode evictData;
+        try {
+            evictData = this.lfuManSet.first();
+        } catch (NoSuchElementException ex) {
+            throw new DbException("BufferPool: Pool is empty.\n" + ex.getMessage());
+        }
+        PageId evictPgId = evictData.getPageId();
+        this.lfuManSet.remove(evictData);
+        this.lfuManPoolMap.remove(evictPgId);
     }
 
 }
