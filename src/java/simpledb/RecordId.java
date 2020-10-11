@@ -51,11 +51,9 @@ public class RecordId implements Serializable {
         if (this == o) {
             return true;
         } else if (o instanceof RecordId) {
-            var ro = (RecordId)o;
-            if (this.tupleno == ro.tupleno &&
-                this.pid.equals(ro.pid)) {
-                return true;
-            }
+            RecordId ro = (RecordId)o;
+            return this.tupleno == ro.tupleno &&
+                    this.pid.equals(ro.pid);
         }
         return false;
     }

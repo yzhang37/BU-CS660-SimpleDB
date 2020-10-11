@@ -37,7 +37,7 @@ public class SeqScan implements DbIterator {
         this.tableId = tableid;
         this.tableAlias = tableAlias;
 
-        var file = Database.getCatalog().getDatabaseFile(tableid);
+        DbFile file = Database.getCatalog().getDatabaseFile(tableid);
         this.it = file.iterator(tid);
     }
 
