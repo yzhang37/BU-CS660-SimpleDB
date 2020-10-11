@@ -53,7 +53,7 @@ public class HeapPageId implements PageId {
         if (this == o) {
             return true;
         } else if (o instanceof HeapPageId) {
-            var opgId = (HeapPageId)o;
+            HeapPageId opgId = (HeapPageId)o;
             return this.pgNo == opgId.pgNo &&
                     this.tableId == opgId.tableId;
         }
@@ -67,7 +67,7 @@ public class HeapPageId implements PageId {
      *  constructors.
      */
     public int[] serialize() {
-        int data[] = new int[2];
+        int[] data = new int[2];
 
         data[0] = getTableId();
         data[1] = pageNumber();

@@ -62,7 +62,7 @@ public class HeapFileIterator implements DbFileIterator {
         PageId pageId = new HeapPageId(this.f.getId(), pageNum);
         Page page = Database.getBufferPool().getPage(this.tid, pageId, Permissions.READ_ONLY);
 
-        var list = new ArrayList<Tuple>();
+        ArrayList<Tuple> list = new ArrayList<>();
         HeapPage heapPage = (HeapPage)page;
         Iterator<Tuple> itr = heapPage.iterator();
         while(itr.hasNext()){
