@@ -195,8 +195,44 @@ public class BTreeFile implements DbFile {
 	private BTreeLeafPage findLeafPage(TransactionId tid, HashMap<PageId, Page> dirtypages, BTreePageId pid, Permissions perm,
 			Field f) 
 					throws DbException, TransactionAbortedException {
-		// some code goes here
-        return null;
+		Page page;
+		switch (pid.pgcateg()) {
+			case BTreePageId.LEAF:
+				page = this.getPage(tid, dirtypages, pid, perm);
+				if (!(page instanceof BTreeLeafPage)) break;
+				return (BTreeLeafPage)page;
+			case BTreePageId.INTERNAL:
+				page = this.getPage(tid, dirtypages, pid, Permissions.READ_ONLY);
+				if (!(page instanceof BTreeInternalPage)) break;
+				BTreeInternalPage intPage = (BTreeInternalPage)page;
+				Iterator<BTreeEntry> it = intPage.iterator();
+				if (it == null || !it.hasNext())
+					throw new DbException("BTreeFile: invalid BTreePage iterator");
+				// first, if the f is null, then we directly get the most lefty item.
+				if (f == null) {
+					return findLeafPage(tid, dirtypages, it.next().getLeftChild(), perm, f);
+				}
+				// then f is provided. We should scan the page.
+				BTreeEntry entry = it.next();
+				while (true) {
+					Field val = entry.getKey();
+					// the value got, and then we can compare it with f.
+					// 1. <= case
+					if (f.compare(Op.LESS_THAN_OR_EQ, val)) {
+						return findLeafPage(tid, dirtypages, entry.getLeftChild(), perm, f);
+					}
+					if (!it.hasNext()) { // meets the end
+						break;
+					} else {
+						entry = it.next();
+					}
+				}
+				return findLeafPage(tid, dirtypages, entry.getRightChild(), perm, f);
+			case BTreePageId.ROOT_PTR:
+			case BTreePageId.HEADER:
+				throw new DbException("BTreeFile: findLeafPage doesn't support ROOT_PTR and HEADER");
+		}
+		throw new DbException("BTreeFile: findLeafPage, Page type doesn't match with PageId.");
 	}
 	
 	/**
@@ -240,7 +276,7 @@ public class BTreeFile implements DbFile {
 	 */
 	protected BTreeLeafPage splitLeafPage(TransactionId tid, HashMap<PageId, Page> dirtypages, BTreeLeafPage page, Field field) 
 			throws DbException, IOException, TransactionAbortedException {
-		// some code goes here
+		// TODO: splitLeafPage code goes here
         //
         // Split the leaf page by adding a new page on the right of the existing
 		// page and moving half of the tuples to the new page.  Copy the middle key up
@@ -277,7 +313,7 @@ public class BTreeFile implements DbFile {
 	protected BTreeInternalPage splitInternalPage(TransactionId tid, HashMap<PageId, Page> dirtypages, 
 			BTreeInternalPage page, Field field) 
 					throws DbException, IOException, TransactionAbortedException {
-		// some code goes here
+		// TODO: splitInternalPage code goes here
 		return null;
 	}
 	
@@ -569,7 +605,7 @@ public class BTreeFile implements DbFile {
 	 */
 	protected void stealFromLeafPage(BTreeLeafPage page, BTreeLeafPage sibling,
 			BTreeInternalPage parent, BTreeEntry entry, boolean isRightSibling) throws DbException {
-		// some code goes here
+		// TODO: stealFromLeafPage code goes here
         //
         // Move some of the tuples from the sibling to the page so
 		// that the tuples are evenly distributed. Be sure to update
@@ -649,7 +685,7 @@ public class BTreeFile implements DbFile {
 	protected void stealFromLeftInternalPage(TransactionId tid, HashMap<PageId, Page> dirtypages, 
 			BTreeInternalPage page, BTreeInternalPage leftSibling, BTreeInternalPage parent,
 			BTreeEntry parentEntry) throws DbException, IOException, TransactionAbortedException {
-		// some code goes here
+		// TODO: stealFromLeftInternalPage code goes here
 	}
 	
 	/**
@@ -673,7 +709,7 @@ public class BTreeFile implements DbFile {
 	protected void stealFromRightInternalPage(TransactionId tid, HashMap<PageId, Page> dirtypages, 
 			BTreeInternalPage page, BTreeInternalPage rightSibling, BTreeInternalPage parent,
 			BTreeEntry parentEntry) throws DbException, IOException, TransactionAbortedException {
-		// some code goes here
+		// TODO: stealFromRightInternalPage code goes here
         // Move some of the entries from the right sibling to the page so
 		// that the entries are evenly distributed. Be sure to update
 		// the corresponding parent entry. Be sure to update the parent
@@ -702,7 +738,7 @@ public class BTreeFile implements DbFile {
 			BTreeLeafPage leftPage, BTreeLeafPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry) 
 					throws DbException, IOException, TransactionAbortedException {
 
-		// some code goes here
+		// TODO: mergeLeafPages code goes here
         //
 		// Move all the tuples from the right page to the left page, update
 		// the sibling pointers, and make the right page available for reuse.
@@ -734,7 +770,7 @@ public class BTreeFile implements DbFile {
 			BTreeInternalPage leftPage, BTreeInternalPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry) 
 					throws DbException, IOException, TransactionAbortedException {
 		
-		// some code goes here
+		// TODO: mergeInternalPages code goes here
         //
         // Move all the entries from the right page to the left page, update
 		// the parent pointers of the children in the entries that were moved, 

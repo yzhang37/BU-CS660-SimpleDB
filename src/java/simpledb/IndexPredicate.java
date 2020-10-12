@@ -19,18 +19,19 @@ public class IndexPredicate implements Serializable {
      *   Predicate.Op.GREATER_THAN_OR_EQ, or Predicate.Op.LESS_THAN_OR_EQ
      * @see Predicate
      */
+    private final Predicate.Op op;
+    private final Field field;
     public IndexPredicate(Predicate.Op op, Field fvalue) {
-        // some code goes here
+        this.op = op;
+        this.field = fvalue;
     }
 
     public Field getField() {
-        // some code goes here
-        return null;
+        return this.field;
     }
 
     public Predicate.Op getOp() {
-        // some code goes here
-        return null;
+        return this.op;
     }
 
     /** Return true if the fieldvalue in the supplied predicate
@@ -39,7 +40,10 @@ public class IndexPredicate implements Serializable {
         @param ipd The field to compare against.
     */
     public boolean equals(IndexPredicate ipd) {
-        // some code goes here
+        if (this == ipd) return true;
+        else if (ipd != null) {
+            return ipd.op.equals(this.op) && ipd.field.equals(this.field);
+        }
         return false;
     }
 
