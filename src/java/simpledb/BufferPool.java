@@ -2,6 +2,7 @@ package simpledb;
 
 import java.io.*;
 
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -240,7 +241,16 @@ public class BufferPool {
      *     break simpledb if running in NO STEAL mode.
      */
     public synchronized void flushAllPages() throws IOException {
-        // TODO: flushAllPages() code goes here
+        // iterate over all the page
+        ArrayList<Page> flushList = new ArrayList<>();
+        for (LFUNode lfuNode: this.lfuManPoolMap.values()) {
+            if (lfuNode.getPage().isDirty() != null) {
+                flushList.add(lfuNode.getPage());
+            }
+        }
+        for (Page page: flushList) {
+            this.flushPage(page.getId());
+        }
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -252,7 +262,11 @@ public class BufferPool {
         are removed from the cache so they can be reused safely
     */
     public synchronized void discardPage(PageId pid) {
-        // TODO: discardPage(PageId) code goes here
+        LFUNode lfuNode = this.lfuManPoolMap.get(pid);
+        if (lfuNode != null) {
+            this.lfuManSet.remove(lfuNode);
+            this.lfuManPoolMap.remove(pid);
+        }
     }
 
     /**

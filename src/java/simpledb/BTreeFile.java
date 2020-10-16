@@ -218,7 +218,7 @@ public class BTreeFile implements DbFile {
 					Field val = entry.getKey();
 					// the value got, and then we can compare it with f.
 					// 1. <= case
-					if (f.compare(Op.LESS_THAN_OR_EQ, val)) {
+					if (f.compare(Op.LESS_THAN, val)) {
 						return findLeafPage(tid, dirtypages, entry.getLeftChild(), perm, f);
 					}
 					if (!it.hasNext()) { // meets the end
@@ -276,16 +276,55 @@ public class BTreeFile implements DbFile {
 	 */
 	protected BTreeLeafPage splitLeafPage(TransactionId tid, HashMap<PageId, Page> dirtypages, BTreeLeafPage page, Field field) 
 			throws DbException, IOException, TransactionAbortedException {
-		// TODO: splitLeafPage code goes here
-        //
         // Split the leaf page by adding a new page on the right of the existing
 		// page and moving half of the tuples to the new page.  Copy the middle key up
 		// into the parent page, and recursively split the parent as needed to accommodate
 		// the new entry.  getParentWithEmtpySlots() will be useful here.  Don't forget to update
 		// the sibling pointers of all the affected leaf pages.  Return the page into which a 
 		// tuple with the given key field should be inserted.
-        return null;
-		
+
+		// use this.getEmptyPage to create a new Page.
+		BTreeLeafPage newPg = (BTreeLeafPage) this.getEmptyPage(tid, dirtypages, BTreePageId.LEAF);
+		int orig_size = page.getNumTuples();
+		Iterator<Tuple> it = page.iterator();
+		if (!it.hasNext()) throw new DbException("BTreeFile: splitLeafNode, Invalid iterator");
+		// for convenience, we move ⎣orig_size / 2⎦ tuple to the new page
+		//   because we iterate from the left to the right.
+		for (int i = 0; i < orig_size / 2; ++i) {
+			if (!it.hasNext()) break;
+			Tuple tup = it.next();
+			page.deleteTuple(tup);
+			newPg.insertTuple(tup);
+		}
+		// if the original page has left sibling, we should make it connected to the new page
+		if (page.getLeftSiblingId() != null) {
+			Page leftPg = this.getPage(tid, dirtypages, page.getLeftSiblingId(), Permissions.READ_WRITE);
+			if (!(leftPg instanceof BTreeLeafPage))
+				throw new DbException("BTreeFile: splitLeafNode, invalid left node");
+			BTreeLeafPage leftLeafPage = (BTreeLeafPage)leftPg;
+			leftLeafPage.setRightSiblingId(newPg.getId());   // (no change) <-- leftLeaf --> newPg
+		}
+		// now we copy the rest linked list data from the original
+		newPg.setLeftSiblingId(page.getLeftSiblingId());     //  leftLeaf <-- newPg --> page
+		newPg.setRightSiblingId(page.getId());               //
+		page.setLeftSiblingId(newPg.getId());                //  newPg <-- page --> (no change)
+
+		// now we should copy the middle item to parent
+		assert(it.hasNext());
+		// PS: to find how to get this func, int keyField(), I spent great deal of time on it!
+		Field copyUpField = it.next().getField(this.keyField());
+		BTreeEntry copyUp = new BTreeEntry(copyUpField, newPg.getId(), page.getId());
+		BTreeInternalPage the_parent = this.getParentWithEmptySlots(tid, dirtypages, page.getParentId(), copyUpField);
+		// link children with parent.
+		the_parent.insertEntry(copyUp);
+		this.updateParentPointers(tid, dirtypages, the_parent);
+
+		// finally we compare copyUpField with field. and return the OK page
+		if (field.compare(Op.LESS_THAN, copyUpField)) {
+			return newPg;
+		} else {
+			return page;
+		}
 	}
 	
 	/**
@@ -313,8 +352,34 @@ public class BTreeFile implements DbFile {
 	protected BTreeInternalPage splitInternalPage(TransactionId tid, HashMap<PageId, Page> dirtypages, 
 			BTreeInternalPage page, Field field) 
 					throws DbException, IOException, TransactionAbortedException {
-		// TODO: splitInternalPage code goes here
-		return null;
+		BTreeInternalPage newPg = (BTreeInternalPage) this.getEmptyPage(tid, dirtypages, BTreePageId.INTERNAL);
+		int orig_size = page.getNumEntries();
+		Iterator<BTreeEntry> it = page.iterator();
+		if (!it.hasNext()) throw new DbException("BTreeFile: splitInternalNode, Invalid iterator");
+		for (int i = 0; i < orig_size / 2; ++i) {
+			if (!it.hasNext()) break;
+			BTreeEntry ent = it.next();
+			page.deleteKeyAndLeftChild(ent);
+			newPg.insertEntry(ent);
+		}
+		// internal page don't need left sibling and right sibling.
+		assert(it.hasNext());
+		BTreeEntry moveUp = it.next();
+		Field moveUpField = moveUp.getKey();
+		page.deleteKeyAndLeftChild(moveUp);
+		updateParentPointers(tid, dirtypages, newPg);
+		updateParentPointers(tid, dirtypages, page);
+
+		moveUp = new BTreeEntry(moveUpField, newPg.getId(), page.getId());
+		BTreeInternalPage the_parent = this.getParentWithEmptySlots(tid, dirtypages, page.getParentId(), moveUpField);
+		the_parent.insertEntry(moveUp);
+		updateParentPointers(tid, dirtypages, the_parent);
+
+		if (field.compare(Op.LESS_THAN, moveUpField)) {
+			return newPg;
+		} else {
+			return page;
+		}
 	}
 	
 	/**
