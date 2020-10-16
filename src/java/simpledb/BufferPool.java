@@ -218,8 +218,20 @@ public class BufferPool {
      */
     public void insertTuple(TransactionId tid, int tableId, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
+        ArrayList<Page> affectedPages;
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
-        dbFile.insertTuple(tid, t);
+        affectedPages = dbFile.insertTuple(tid, t);
+        for (Page page: affectedPages) {
+            page.markDirty(true, tid);
+            if (!this.evManPoolMap.containsKey(page.getId())) {
+                if (this.evManPoolMap.size() >= this.pool_max_size) {
+                    this.evictPage();
+                }
+                EVNode evNode = new EVNode(1, new Date(), page.getId(), page);
+                this.evManPoolMap.put(page.getId(), evNode);
+                this.evManSet.add(evNode);
+            }
+        }
     }
 
     /**
@@ -237,9 +249,21 @@ public class BufferPool {
      */
     public  void deleteTuple(TransactionId tid, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
+        ArrayList<Page> affectedPages;
         int tableId = t.getRecordId().getPageId().getTableId();
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
-        dbFile.deleteTuple(tid, t);
+        affectedPages = dbFile.deleteTuple(tid, t);
+        for (Page page: affectedPages) {
+            page.markDirty(true, tid);
+            if (!this.evManPoolMap.containsKey(page.getId())) {
+                if (this.evManPoolMap.size() >= this.pool_max_size) {
+                    this.evictPage();
+                }
+                EVNode evNode = new EVNode(1, new Date(), page.getId(), page);
+                this.evManPoolMap.put(page.getId(), evNode);
+                this.evManSet.add(evNode);
+            }
+        }
     }
 
     /**
@@ -308,14 +332,19 @@ public class BufferPool {
         while (it.hasNext()) {
             evictData = it.next();
             Page evictPage = evictData.getPage();
-            if (evictPage.isDirty() == null) {
-                PageId evictPgId = evictData.getPageId();
-                this.evManSet.remove(evictData);
-                this.evManPoolMap.remove(evictPgId);
-                return;
+            if (evictPage.isDirty() != null) {
+                try {
+                    this.flushPage(evictPage.getId());
+                } catch (IOException ex) {
+                    continue;
+                }
             }
+            PageId evictPgId = evictData.getPageId();
+            this.evManSet.remove(evictData);
+            this.evManPoolMap.remove(evictPgId);
+            return;
         }
-        throw new DbException("BufferPool: All pages is dirty, cannot evict.");
+        throw new DbException("BufferPool: evictPage cannot flush and evict any pages.");
     }
 
 }
