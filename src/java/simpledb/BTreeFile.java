@@ -218,7 +218,7 @@ public class BTreeFile implements DbFile {
 					Field val = entry.getKey();
 					// the value got, and then we can compare it with f.
 					// 1. <= case
-					if (f.compare(Op.LESS_THAN, val)) {
+					if (f.compare(Op.LESS_THAN_OR_EQ, val)) {
 						return findLeafPage(tid, dirtypages, entry.getLeftChild(), perm, f);
 					}
 					if (!it.hasNext()) { // meets the end
@@ -320,7 +320,7 @@ public class BTreeFile implements DbFile {
 		this.updateParentPointers(tid, dirtypages, the_parent);
 
 		// finally we compare copyUpField with field. and return the OK page
-		if (field.compare(Op.LESS_THAN, copyUpField)) {
+		if (field.compare(Op.LESS_THAN_OR_EQ, copyUpField)) {
 			return newPg;
 		} else {
 			return page;
@@ -375,7 +375,7 @@ public class BTreeFile implements DbFile {
 		the_parent.insertEntry(moveUp);
 		updateParentPointers(tid, dirtypages, the_parent);
 
-		if (field.compare(Op.LESS_THAN, moveUpField)) {
+		if (field.compare(Op.LESS_THAN_OR_EQ, moveUpField)) {
 			return newPg;
 		} else {
 			return page;
