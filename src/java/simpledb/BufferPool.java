@@ -1,10 +1,7 @@
 package simpledb;
 
 import java.io.*;
-
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.NoSuchElementException;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 
@@ -30,14 +27,14 @@ public class BufferPool {
     constructor instead. */
     public static final int DEFAULT_PAGES = 50;
 
-    // MARK: New Implemented LFU algorithm!
-    private class LFUNode implements Comparable<LFUNode> {
+    // MARK: New Implemented Eviction algorithm!
+    private class EVNode implements Comparable<EVNode> {
         private int count;
-        private final Date time;
+        private Date time;
         private final PageId key;
         private final Page value;
 
-        LFUNode(int count, Date time, PageId key, Page value) {
+        EVNode(int count, Date time, PageId key, Page value) {
             this.count = count;
             this.time = time;
             this.key = key;
@@ -47,24 +44,28 @@ public class BufferPool {
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
-            else if (o instanceof LFUNode) {
-                LFUNode lObj = (LFUNode)o;
+            else if (o instanceof EVNode) {
+                EVNode lObj = (EVNode)o;
                 return this.count == lObj.count && this.time.equals(lObj.time);
             } else return false;
         }
 
         @Override
-        public int compareTo(LFUNode o) {
-            return 0;
+        public int compareTo(EVNode o) {
+            if (this.count != o.count) {
+                return o.count - this.count;
+            } else {
+                return this.time.compareTo(o.time);
+            }
         }
 
         public int getCount() {
             return this.count;
         }
 
-        public int incrementCount() {
+        public void makeUse() {
             this.count++;
-            return this.count;
+            this.time = new Date();
         }
 
         public PageId getPageId() {
@@ -77,11 +78,11 @@ public class BufferPool {
     }
 
     /*
-     lfuManPoolMap: used to store all the buffers. Man means Manage
-     lfuManSet: A set used to automatically sort node using Tree.
+     evManPoolMap: used to store all the buffers. Man means Manage
+     evManSet: A set used to automatically sort node using Tree.
      */
-    private ConcurrentHashMap<PageId, LFUNode> lfuManPoolMap;
-    private ConcurrentSkipListSet<LFUNode> lfuManSet;
+    private ConcurrentHashMap<PageId, EVNode> evManPoolMap;
+    private ConcurrentSkipListSet<EVNode> evManSet;
     private final int pool_max_size;
 
     /**
@@ -91,8 +92,8 @@ public class BufferPool {
      */
     public BufferPool(int numPages) {
         this.pool_max_size = numPages;
-        this.lfuManPoolMap = new ConcurrentHashMap<>();
-        this.lfuManSet = new ConcurrentSkipListSet<>();
+        this.evManPoolMap = new ConcurrentHashMap<>();
+        this.evManSet = new ConcurrentSkipListSet<>();
     }
 
     public static int getPageSize() {
@@ -126,28 +127,34 @@ public class BufferPool {
      */
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        if (this.lfuManPoolMap.containsKey(pid)) {
+        Page retPage = null;
+        boolean to_dirty = (perm == Permissions.READ_WRITE);
+        if (this.evManPoolMap.containsKey(pid)) {
             // we get the old key of PageId. So we must update it's use count!
-            LFUNode pageLfuData = this.lfuManPoolMap.get(pid);
-            this.lfuManSet.remove(pageLfuData);
+            EVNode pageEvData = this.evManPoolMap.get(pid);
+            this.evManSet.remove(pageEvData);
             // count + 1
-            pageLfuData.incrementCount();
-            this.lfuManSet.add(pageLfuData);
-            return pageLfuData.getPage();
+            pageEvData.makeUse();
+            this.evManSet.add(pageEvData);
+            retPage = pageEvData.getPage();
         } else {
             // we didn't find, so we call Table's File to read the page.
             int tableId = pid.getTableId();
             DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
             Page readPage = dbFile.readPage(pid);
-            if (this.lfuManPoolMap.size() >= this.pool_max_size) {
+            if (this.evManPoolMap.size() >= this.pool_max_size) {
                 // exceed max size. So we must evict a page.
                 this.evictPage();
             }
-            LFUNode pageLfuData = new LFUNode(1, new Date(), pid, readPage);
-            this.lfuManPoolMap.put(pid, pageLfuData);
-            this.lfuManSet.add(pageLfuData);
-            return readPage;
+            EVNode pageEvData = new EVNode(1, new Date(), pid, readPage);
+            this.evManPoolMap.put(pid, pageEvData);
+            this.evManSet.add(pageEvData);
+            retPage = readPage;
         }
+        if (to_dirty) {
+            retPage.markDirty(true, tid);
+        }
+        return retPage;
     }
 
     /**
@@ -243,13 +250,10 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // iterate over all the page
         ArrayList<Page> flushList = new ArrayList<>();
-        for (LFUNode lfuNode: this.lfuManPoolMap.values()) {
-            if (lfuNode.getPage().isDirty() != null) {
-                flushList.add(lfuNode.getPage());
+        for (EVNode evNode: this.evManPoolMap.values()) {
+            if (evNode.getPage().isDirty() != null) {
+                flushList.add(evNode.getPage());
             }
-        }
-        for (Page page: flushList) {
-            this.flushPage(page.getId());
         }
     }
 
@@ -262,10 +266,10 @@ public class BufferPool {
         are removed from the cache so they can be reused safely
     */
     public synchronized void discardPage(PageId pid) {
-        LFUNode lfuNode = this.lfuManPoolMap.get(pid);
-        if (lfuNode != null) {
-            this.lfuManSet.remove(lfuNode);
-            this.lfuManPoolMap.remove(pid);
+        EVNode evNode = this.evManPoolMap.get(pid);
+        if (evNode != null) {
+            this.evManSet.remove(evNode);
+            this.evManPoolMap.remove(pid);
         }
     }
 
@@ -278,7 +282,7 @@ public class BufferPool {
         // then find the corresponding Table.
         // then: write the page to the correct position in Table's related File.
         // then: mark the page as non-dirty.
-        Page page = this.lfuManPoolMap.get(pid).getPage();
+        Page page = this.evManPoolMap.get(pid).getPage();
         int tableId = pid.getTableId();
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
         dbFile.writePage(page);
@@ -296,15 +300,22 @@ public class BufferPool {
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
     private synchronized  void evictPage() throws DbException {
-        LFUNode evictData;
-        try {
-            evictData = this.lfuManSet.first();
-        } catch (NoSuchElementException ex) {
-            throw new DbException("BufferPool: Pool is empty.\n" + ex.getMessage());
+        EVNode evictData;
+        Iterator<EVNode> it = this.evManSet.iterator();
+        if (!it.hasNext()) {
+            throw new DbException("BufferPool: Pool is empty.");
         }
-        PageId evictPgId = evictData.getPageId();
-        this.lfuManSet.remove(evictData);
-        this.lfuManPoolMap.remove(evictPgId);
+        while (it.hasNext()) {
+            evictData = it.next();
+            Page evictPage = evictData.getPage();
+            if (evictPage.isDirty() == null) {
+                PageId evictPgId = evictData.getPageId();
+                this.evManSet.remove(evictData);
+                this.evManPoolMap.remove(evictPgId);
+                return;
+            }
+        }
+        throw new DbException("BufferPool: All pages is dirty, cannot evict.");
     }
 
 }
