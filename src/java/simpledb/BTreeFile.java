@@ -654,7 +654,19 @@ public class BTreeFile implements DbFile {
 			}
 		}
 	}
-	
+
+	private void testIter(Iterator<Tuple> it) {
+		int count = 0;
+		StringJoiner sj = new StringJoiner(" -> ");
+		while (it.hasNext()) {
+			Tuple tup = it.next();
+			sj.add(tup.toString());
+			++count;
+		}
+		System.out.println(sj);
+		System.out.printf("Total %d tuples.\n", count);
+	}
+
 	/**
 	 * Steal tuples from a sibling and copy them to the given page so that both pages are at least
 	 * half full.  Update the parent's entry so that the key matches the key field of the first
@@ -670,11 +682,37 @@ public class BTreeFile implements DbFile {
 	 */
 	protected void stealFromLeafPage(BTreeLeafPage page, BTreeLeafPage sibling,
 			BTreeInternalPage parent, BTreeEntry entry, boolean isRightSibling) throws DbException {
-		// TODO: stealFromLeafPage code goes here
-        //
         // Move some of the tuples from the sibling to the page so
 		// that the tuples are evenly distributed. Be sure to update
 		// the corresponding parent entry.
+		Iterator<Tuple> it;
+		if (!isRightSibling) {
+			// we're stealing nodes from the left sibling.
+			it = sibling.reverseIterator();
+		} else {
+			// we're stealing nodes from the right sibling.
+			it = sibling.iterator();
+		}
+		if (it == null || !it.hasNext()) throw new DbException("BTreeFile: stealFromLeafPage, invalid iterator");
+		// numToMove is the least operations need to do to make two pages have the same tuples.
+		int numToMove = (sibling.getNumTuples() - page.getNumTuples()) / 2;
+		Tuple tup = null;
+		for (int i = 0; i < numToMove; ++i) {
+			if (!it.hasNext()) throw new DbException("BTreeFile: stealFromLeafPage, no more value to unpack");
+			tup = it.next();
+			sibling.deleteTuple(tup);
+			page.insertTuple(tup);
+		}
+		// now we update the parents
+		if (isRightSibling) {
+			// because when Right sibling, the previous nodes are all moved to left page.
+			// so we need to fetch the next one.
+			if (!it.hasNext()) throw new DbException("BTreeFile: stealFromLeafPage, invalid iterator");
+			tup = it.next();
+		}
+		if (tup == null) throw new DbException("BTreeFile: stealFromLeafPage, invalid iterator");
+		entry.setKey(tup.getField(keyField));
+		parent.updateEntry(entry);
 	}
 
 	/**
@@ -750,7 +788,32 @@ public class BTreeFile implements DbFile {
 	protected void stealFromLeftInternalPage(TransactionId tid, HashMap<PageId, Page> dirtypages, 
 			BTreeInternalPage page, BTreeInternalPage leftSibling, BTreeInternalPage parent,
 			BTreeEntry parentEntry) throws DbException, IOException, TransactionAbortedException {
-		// TODO: stealFromLeftInternalPage code goes here
+		// numToMove is the least operations need to do to make two pages have the same entries.
+		int numToMove = (leftSibling.getNumEntries() - page.getNumEntries()) / 2;
+		// from the left, we must traverse reversely.
+		Iterator<BTreeEntry> it = leftSibling.reverseIterator();
+		if (it == null || !it.hasNext()) throw new DbException("BTreeFile: stealFromLeftInternalPage, invalid iterator");
+
+		Iterator<BTreeEntry> pIt = page.iterator();
+		if (pIt == null || !pIt.hasNext()) throw new DbException("BTreeFile: stealFromLeftInternalPage, invalid iterator");
+		// we can create an entry called `Hub`. Hub is used to transfer data from left pages to the right pages.
+		// and alls the key will flow through the hub.
+		BTreeEntry hub = new BTreeEntry(parentEntry.getKey(), null, pIt.next().getLeftChild());
+
+		for (int i = 0; i < numToMove; ++i) {
+			if (!it.hasNext()) throw new DbException("BTreeFile: stealFromLeftInternalPage, no more entry to unpack");
+			BTreeEntry left = it.next();
+			hub.setLeftChild(left.getRightChild());
+			page.insertEntry(hub);
+			hub = new BTreeEntry(left.getKey(), null, left.getRightChild());
+			// after we finish, we can delete the original left. The new left value is stored into hub.
+			leftSibling.deleteKeyAndRightChild(left);
+		}
+		// The final hub is not needed any more. We just copy it's key to the parent.
+		parentEntry.setKey(hub.getKey());
+		parent.updateEntry(parentEntry);
+		updateParentPointers(tid, dirtypages, page);
+		updateParentPointers(tid, dirtypages, leftSibling);
 	}
 	
 	/**
@@ -774,11 +837,34 @@ public class BTreeFile implements DbFile {
 	protected void stealFromRightInternalPage(TransactionId tid, HashMap<PageId, Page> dirtypages, 
 			BTreeInternalPage page, BTreeInternalPage rightSibling, BTreeInternalPage parent,
 			BTreeEntry parentEntry) throws DbException, IOException, TransactionAbortedException {
-		// TODO: stealFromRightInternalPage code goes here
         // Move some of the entries from the right sibling to the page so
 		// that the entries are evenly distributed. Be sure to update
 		// the corresponding parent entry. Be sure to update the parent
 		// pointers of all children in the entries that were moved.
+
+		// numToMove is the least operations need to do to make two pages have the same entries.
+		int numToMove = (rightSibling.getNumEntries() - page.getNumEntries()) / 2;
+		Iterator<BTreeEntry> it = rightSibling.iterator();
+		if (it == null || !it.hasNext()) throw new DbException("BTreeFile: stealFromRightInternalPage, invalid iterator");
+
+		// again, the hub.
+		Iterator<BTreeEntry> pIt = page.reverseIterator();
+		if (pIt == null || !pIt.hasNext()) throw new DbException("BTreeFile: stealFromRightInternalPage, invalid iterator");
+		BTreeEntry hub = new BTreeEntry(parentEntry.getKey(), pIt.next().getRightChild(), null);
+
+		for (int i = 0; i < numToMove; ++i) {
+			if (!it.hasNext()) throw new DbException("BTreeFile: stealFromRightInternalPage, no more entry to unpack");
+			BTreeEntry right = it.next();
+			hub.setRightChild(right.getLeftChild());
+			page.insertEntry(hub);
+			hub = new BTreeEntry(right.getKey(), right.getLeftChild(), null);
+			rightSibling.deleteKeyAndLeftChild(right);
+		}
+		// The final hub is not needed any more. We just copy it's key to the parent.
+		parentEntry.setKey(hub.getKey());
+		parent.updateEntry(parentEntry);
+		updateParentPointers(tid, dirtypages, page);
+		updateParentPointers(tid, dirtypages, rightSibling);
 	}
 	
 	/**
