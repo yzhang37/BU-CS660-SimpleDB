@@ -888,13 +888,33 @@ public class BTreeFile implements DbFile {
 	protected void mergeLeafPages(TransactionId tid, HashMap<PageId, Page> dirtypages, 
 			BTreeLeafPage leftPage, BTreeLeafPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry) 
 					throws DbException, IOException, TransactionAbortedException {
-
-		// TODO: mergeLeafPages code goes here
-        //
 		// Move all the tuples from the right page to the left page, update
 		// the sibling pointers, and make the right page available for reuse.
 		// Delete the entry in the parent corresponding to the two pages that are merging -
 		// deleteParentEntry() will be useful here
+
+		// First we fetch the tuple from the right side.
+		Iterator<Tuple> it = rightPage.iterator();
+		if (it == null || !it.hasNext()) throw new DbException("BTreeFile: mergeLeafPages, invalid iterator.");
+		while (it.hasNext()) {
+			Tuple tup = it.next();
+			rightPage.deleteTuple(tup);
+			leftPage.insertTuple(tup);
+			// here we don't need to throw exceptions when reach the end!
+		}
+		// When page is merged. If the original right page has right sibling, we should link the original left
+		// page to that right sibling.
+		if (rightPage.getRightSiblingId() != null) {
+			Page page = this.getPage(tid, dirtypages, rightPage.getRightSiblingId(), Permissions.READ_WRITE);
+			if (!(page instanceof BTreeLeafPage)) throw new DbException("BTreeFile: mergeLeafPages, right sibling type mismatch!");
+			BTreeLeafPage outerRight = (BTreeLeafPage)page;
+			outerRight.setLeftSiblingId(leftPage.getId());
+		}
+		leftPage.setRightSiblingId(rightPage.getRightSiblingId());
+
+		// after we're done, release the resource by the rightPage.
+		this.setEmptyPage(tid, dirtypages, rightPage.getId().pageNumber());
+		this.deleteParentEntry(tid, dirtypages, leftPage, parent, parentEntry);
 	}
 
 	/**
@@ -920,14 +940,37 @@ public class BTreeFile implements DbFile {
 	protected void mergeInternalPages(TransactionId tid, HashMap<PageId, Page> dirtypages, 
 			BTreeInternalPage leftPage, BTreeInternalPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry) 
 					throws DbException, IOException, TransactionAbortedException {
-		
-		// TODO: mergeInternalPages code goes here
-        //
         // Move all the entries from the right page to the left page, update
 		// the parent pointers of the children in the entries that were moved, 
 		// and make the right page available for reuse
 		// Delete the entry in the parent corresponding to the two pages that are merging -
 		// deleteParentEntry() will be useful here
+
+		Iterator<BTreeEntry> lftIt = leftPage.reverseIterator(), rgtIt = rightPage.iterator();
+		if (lftIt == null || rgtIt == null || !lftIt.hasNext() || !rgtIt.hasNext()) {
+			throw new DbException("BTreeFile: mergeInternalPages, invalid iterators.");
+		}
+		// 1. First, we need to move the entry in parent, to the left page.
+		BTreeEntry entryInParent = new BTreeEntry(parentEntry.getKey(),
+				lftIt.next().getRightChild(),
+				rgtIt.next().getLeftChild());
+		leftPage.insertEntry(entryInParent);
+
+		rgtIt = rightPage.iterator();
+		while (rgtIt.hasNext()) {
+			BTreeEntry entry = rgtIt.next();
+			rightPage.deleteKeyAndLeftChild(entry);
+			leftPage.insertEntry(entry);
+		}
+
+		// because internal don't have concepts of sibling. We just pass sibling connection here.
+		//
+
+		// after we're done, release the resource by the rightPage.
+		setEmptyPage(tid, dirtypages, rightPage.getId().pageNumber());
+		updateParentPointers(tid, dirtypages, leftPage);
+
+		deleteParentEntry(tid, dirtypages, leftPage, parent, parentEntry);
 	}
 	
 	/**
