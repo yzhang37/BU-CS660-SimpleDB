@@ -6,8 +6,19 @@ import java.util.*;
  * The Join operator implements the relational join operation.
  */
 public class Join extends Operator {
-
+    private enum Status {
+        NOT_STARTED, READING, EOF
+    }
     private static final long serialVersionUID = 1L;
+
+    private final JoinPredicate joinPred;
+    private final DbIterator child1, child2;
+    // mergedTD stores the TupleDesc of merged data type.
+    private final TupleDesc mergedTD;
+    private final int outerTupleSize, innerTupleSize;
+    private Tuple outerTuple;
+    private Status c1status = Status.NOT_STARTED,
+            c2status = Status.NOT_STARTED;
 
     /**
      * Constructor. Accepts to children to join and the predicate to join them
@@ -21,12 +32,16 @@ public class Join extends Operator {
      *            Iterator for the right(inner) relation to join
      */
     public Join(JoinPredicate p, DbIterator child1, DbIterator child2) {
-        // some code goes here
+        this.joinPred = p;
+        this.child1 = child1;
+        this.child2 = child2;
+        this.outerTupleSize = child1.getTupleDesc().numFields();
+        this.innerTupleSize = child2.getTupleDesc().numFields();
+        this.mergedTD = TupleDesc.merge(child1.getTupleDesc(), child2.getTupleDesc());
     }
 
     public JoinPredicate getJoinPredicate() {
-        // some code goes here
-        return null;
+        return this.joinPred;
     }
 
     /**
@@ -35,8 +50,7 @@ public class Join extends Operator {
      *       alias or table name.
      * */
     public String getJoinField1Name() {
-        // some code goes here
-        return null;
+        return this.child1.getTupleDesc().getFieldName(this.joinPred.getField1());
     }
 
     /**
@@ -45,8 +59,7 @@ public class Join extends Operator {
      *       alias or table name.
      * */
     public String getJoinField2Name() {
-        // some code goes here
-        return null;
+        return this.child2.getTupleDesc().getFieldName(this.joinPred.getField2());
     }
 
     /**
@@ -54,21 +67,27 @@ public class Join extends Operator {
      *      implementation logic.
      */
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        return this.mergedTD;
     }
 
     public void open() throws DbException, NoSuchElementException,
             TransactionAbortedException {
-        // some code goes here
+        this.child1.open();
+        this.child2.open();
+        super.open();
+        this.c2status = Status.NOT_STARTED;
+        this.c1status = Status.NOT_STARTED;
     }
 
     public void close() {
-        // some code goes here
+        this.child1.close();
+        this.child2.close();
+        super.close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-        // some code goes here
+        this.close();
+        this.open();
     }
 
     /**
@@ -90,8 +109,72 @@ public class Join extends Operator {
      * @see JoinPredicate#filter
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        // here we simply use Simple Nested Loop Algorithm
+        // this can be very slow and needs mountains of IOs.
+        // but here we just to pass the test first.
+        Tuple innerTuple = null;
+        while (true) {
+            switch (this.c1status) {
+                case NOT_STARTED:
+                    // not started yet, we must first read tuple in child1
+                    if (this.child1.hasNext()) {
+                        this.outerTuple = this.child1.next();
+                        this.c1status = Status.READING;
+                    } else {
+                        return null;
+                    }
+                    break;
+                case READING:
+                    // already on going, we check if child2 reach the EOF.
+                    if (this.c2status == Status.EOF) {
+                        if (this.child1.hasNext()) {
+                            // reach the end, then we reset child2.
+                            this.outerTuple = this.child1.next();
+                            this.child2.rewind();
+                            this.c2status = Status.NOT_STARTED;
+                        } else {
+                            // both child1 and child2 reach the end. we will end the loop
+                            this.c1status = Status.EOF;
+                            return null;
+                        }
+                        // have a retry
+                        continue;
+                    }
+                    break;
+                case EOF:
+                    return null;
+            }
+            switch (this.c2status) {
+                case NOT_STARTED:
+                    if (this.child2.hasNext()) {
+                        innerTuple = this.child2.next();
+                        this.c2status = Status.READING;
+                    } else {
+                        return null;
+                    }
+                    break;
+                case READING:
+                    if (this.child2.hasNext()) {
+                        innerTuple = this.child2.next();
+                    } else {
+                        this.c2status = Status.EOF;
+                        continue;
+                    }
+                    break;
+                case EOF:
+                    continue;
+            }
+            if (this.joinPred.filter(this.outerTuple, innerTuple)) {
+                Tuple mergedTuple = new Tuple(this.mergedTD);
+                for (int i = 0; i < this.outerTupleSize; ++i) {
+                    mergedTuple.setField(i, outerTuple.getField(i));
+                }
+                for (int i = 0; i < this.innerTupleSize; ++i) {
+                    mergedTuple.setField(i + this.outerTupleSize, innerTuple.getField(i));
+                }
+                return mergedTuple;
+            }
+        }
     }
 
     @Override
