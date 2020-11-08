@@ -1,5 +1,6 @@
 package simpledb;
 
+import java.lang.reflect.Array;
 import java.util.*;
 
 /**
@@ -9,10 +10,18 @@ public class HashEquiJoin extends Operator {
 
     private static final long serialVersionUID = 1L;
 
+    private final JoinPredicate joinPred;
+    private final DbIterator child1, child2;
+    private final int tup1Size, tup2Size;
+    private final TupleDesc mergedTupleDesc;
+    private Tuple tup2;
+    private final Type keyType;
+    private HashMap<Integer, ArrayList<Tuple>> IntMap = null;
+    private HashMap<String, ArrayList<Tuple>> StrMap = null;
     /**
      * Constructor. Accepts to children to join and the predicate to join them
      * on
-     * 
+     *
      * @param p
      *            The predicate to use to join the children
      * @param child1
@@ -21,42 +30,83 @@ public class HashEquiJoin extends Operator {
      *            Iterator for the right(inner) relation to join
      */
     public HashEquiJoin(JoinPredicate p, DbIterator child1, DbIterator child2) {
-        // some code goes here
+        this.joinPred = p;
+        this.child1 = child1;
+        this.child2 = child2;
+        this.tup1Size = child1.getTupleDesc().numFields();
+        this.tup2Size = child2.getTupleDesc().numFields();
+        this.mergedTupleDesc = TupleDesc.merge(child1.getTupleDesc(), child2.getTupleDesc());
+        this.keyType = child1.getTupleDesc().getFieldType(p.getField1());
     }
 
     public JoinPredicate getJoinPredicate() {
-        // some code goes here
-        return null;
+        return this.joinPred;
     }
 
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        return this.mergedTupleDesc;
     }
-    
+
     public String getJoinField1Name()
     {
-        // some code goes here
-	return null;
+        return this.child1.getTupleDesc().getFieldName(this.joinPred.getField1());
     }
 
     public String getJoinField2Name()
     {
-        // some code goes here
-        return null;
+        return this.child2.getTupleDesc().getFieldName(this.joinPred.getField2());
     }
-    
+
     public void open() throws DbException, NoSuchElementException,
             TransactionAbortedException {
-        // some code goes here
+        this.child1.open();
+        this.child2.open();
+        if (this.keyType == Type.INT_TYPE) {
+            this.IntMap = new HashMap<>();
+        } else if (this.keyType == Type.STRING_TYPE) {
+            this.StrMap = new HashMap<>();
+        } else {
+            throw new DbException("HashEquiJoin: Invalid Hashjoin Key type.");
+        }
+        Tuple c1ReadTuple;
+        ArrayList<Tuple> the_list;
+        while (this.child1.hasNext()) {
+            c1ReadTuple = this.child1.next();
+            Field f = c1ReadTuple.getField(this.joinPred.getField1());
+            if (this.keyType == Type.INT_TYPE) {
+                IntField key = (IntField)f;
+                if (this.IntMap.containsKey(key.getValue())) {
+                    the_list = this.IntMap.get(key.getValue());
+                } else {
+                    the_list = new ArrayList<>();
+                    this.IntMap.put(key.getValue(), the_list);
+                }
+                the_list.add(c1ReadTuple);
+            } else {
+                StringField key = (StringField)f;
+                if (this.StrMap.containsKey(key.getValue())) {
+                    the_list = this.StrMap.get(key.getValue());
+                } else {
+                    the_list = new ArrayList<>();
+                    this.StrMap.put(key.getValue(), the_list);
+                }
+                the_list.add(c1ReadTuple);
+            }
+        }
+        super.open();
     }
 
     public void close() {
-        // some code goes here
+        this.child1.close();
+        this.child2.close();
+        this.IntMap = null;
+        this.StrMap = null;
+        super.close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-        // some code goes here
+        this.close();
+        this.open();
     }
 
     transient Iterator<Tuple> listIt = null;
@@ -75,13 +125,56 @@ public class HashEquiJoin extends Operator {
      * <p>
      * For example, if one tuple is {1,2,3} and the other tuple is {1,5,6},
      * joined on equality of the first column, then this returns {1,2,3,1,5,6}.
-     * 
+     *
      * @return The next matching tuple.
      * @see JoinPredicate#filter
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-        // some code goes here
+        if (this.listIt != null && this.listIt.hasNext()) {
+            return this.makeJoin();
+        } else {
+            // if we don't have the current processing lists of Child1
+            while (this.child2.hasNext()) {
+                // find the next tup2
+                this.tup2 = this.child2.next();
+                Field f = this.tup2.getField(this.joinPred.getField2());
+                if (this.keyType == Type.INT_TYPE) {
+                    IntField key = (IntField)f;
+                    // if already in hashMap, then we will join
+                    if (this.IntMap.containsKey(key.getValue())) {
+                        this.listIt = this.IntMap.get(key.getValue()).iterator();
+                    } else {
+                        // if not, then skip
+                        continue;
+                    }
+                } else {
+                    StringField key = (StringField)f;
+                    if (this.StrMap.containsKey(key.getValue())) {
+                        this.listIt = this.StrMap.get(key.getValue()).iterator();
+                    } else {
+                        continue;
+                    }
+                }
+                // it's likely the listIt is empty;
+                if (!this.listIt.hasNext()) {
+                    continue;
+                }
+                return this.makeJoin();
+            }
+        }
         return null;
+    }
+
+    private Tuple makeJoin() throws DbException {
+        Tuple tup1 = this.listIt.next();
+        Tuple mergedTuple = new Tuple(this.mergedTupleDesc);
+        for (int i = 0; i < this.tup1Size; ++i) {
+            mergedTuple.setField(i, tup1.getField(i));
+        }
+        for (int i = 0; i < this.tup2Size; ++i) {
+            mergedTuple.setField(i + this.tup1Size, this.tup2.getField(i));
+        }
+        return mergedTuple;
     }
 
     @Override
@@ -94,5 +187,5 @@ public class HashEquiJoin extends Operator {
     public void setChildren(DbIterator[] children) {
         // some code goes here
     }
-    
+
 }
