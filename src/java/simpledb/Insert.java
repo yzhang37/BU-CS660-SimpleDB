@@ -1,5 +1,8 @@
 package simpledb;
 
+import javax.xml.crypto.Data;
+import java.io.IOException;
+
 /**
  * Inserts tuples read from the child operator into the tableId specified in the
  * constructor
@@ -7,6 +10,13 @@ package simpledb;
 public class Insert extends Operator {
 
     private static final long serialVersionUID = 1L;
+
+    private TransactionId tid;
+    private DbIterator child;
+    private int tableId;
+    private boolean used = true;
+
+    private TupleDesc cntTD;
 
     /**
      * Constructor.
@@ -23,24 +33,38 @@ public class Insert extends Operator {
      */
     public Insert(TransactionId t,DbIterator child, int tableId)
             throws DbException {
-        // some code goes here
+        this.tid = t;
+        this.child = child;
+        this.tableId = tableId;
+
+        // check if child's TD differs from that of the table
+        if (!Database.getCatalog().getTupleDesc(tableId).equals(this.child.getTupleDesc())) {
+            throw new DbException("Insert: Child's TupleDesc doesn't match Table's TupleDesc");
+        }
+
+        Type[] typeAr = {Type.INT_TYPE};
+        String[] fieldAr = {"INSERT_CNT"};
+        this.cntTD = new TupleDesc(typeAr, fieldAr);
     }
 
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        return this.cntTD;
     }
 
     public void open() throws DbException, TransactionAbortedException {
-        // some code goes here
+        this.child.open();
+        this.used = false;
+        super.open();
     }
 
     public void close() {
-        // some code goes here
+        this.child.close();
+        super.close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-        // some code goes here
+        this.child.rewind();
+        this.used = false;
     }
 
     /**
@@ -57,8 +81,23 @@ public class Insert extends Operator {
      * @see BufferPool#insertTuple
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        int count = 0;
+        while (this.child.hasNext()) {
+            try {
+                Database.getBufferPool().insertTuple(this.tid, this.tableId, this.child.next());
+                ++count;
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        if (!this.used) {
+            Tuple tp = new Tuple(this.cntTD);
+            tp.setField(0, new IntField(count));
+            this.used = true;
+            return tp;
+        } else {
+            return null;
+        }
     }
 
     @Override
