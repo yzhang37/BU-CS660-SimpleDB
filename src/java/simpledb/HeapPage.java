@@ -116,7 +116,7 @@ public class HeapPage implements Page {
         -- used by recovery */
     public HeapPage getBeforeImage(){
         try {
-            byte[] oldDataRef = null;
+            byte[] oldDataRef;
             synchronized(oldDataLock)
             {
                 oldDataRef = oldData;
@@ -309,10 +309,10 @@ public class HeapPage implements Page {
                 this.tuples[i] = t;
                 // mark used.
                 this.markSlotUsed(i, true);
+                // after insert, we jump out the loop
                 break;
             }
         }
-        throw new DbException("Page should be full.");
     }
 
     /**
