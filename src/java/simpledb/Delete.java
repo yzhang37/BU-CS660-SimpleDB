@@ -10,6 +10,11 @@ public class Delete extends Operator {
 
     private static final long serialVersionUID = 1L;
 
+    private final TransactionId tid;
+    private final DbIterator child;
+    private final TupleDesc cntTD;
+    private boolean used = false;
+
     /**
      * Constructor specifying the transaction that this delete belongs to as
      * well as the child to read from.
@@ -20,24 +25,31 @@ public class Delete extends Operator {
      *            The child operator from which to read tuples for deletion
      */
     public Delete(TransactionId t, DbIterator child) {
-        // some code goes here
+        this.tid = t;
+        this.child = child;
+        Type[] typeAr = {Type.INT_TYPE};
+        String[] fieldAr = {"DELETE_CNT"};
+        this.cntTD = new TupleDesc(typeAr, fieldAr);
     }
 
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        return this.cntTD;
     }
 
     public void open() throws DbException, TransactionAbortedException {
-        // some code goes here
+        this.child.open();
+        this.used = false;
+        super.open();
     }
 
     public void close() {
-        // some code goes here
+        this.child.close();
+        super.close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-        // some code goes here
+        this.child.rewind();
+        this.used = false;
     }
 
     /**
@@ -50,8 +62,23 @@ public class Delete extends Operator {
      * @see BufferPool#deleteTuple
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        int count = 0;
+        while (this.child.hasNext()) {
+            try {
+                Database.getBufferPool().deleteTuple(tid, this.child.next());
+                ++count;
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+        }
+        if (!this.used) {
+            Tuple tp = new Tuple(this.cntTD);
+            tp.setField(0, new IntField(count));
+            this.used = true;
+            return tp;
+        } else {
+            return null;
+        }
     }
 
     @Override
