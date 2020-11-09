@@ -11,11 +11,18 @@ public class Aggregate extends Operator {
 
     private static final long serialVersionUID = 1L;
 
+    private final DbIterator child;
+    private final int aField, gField;
+    private final Type aFieldType, gFieldType;
+    private final Aggregator.Op op;
+    private final TupleDesc mergedTp;
+    private DbIterator aggrIter = null;
+
     /**
      * Constructor.
      * 
      * Implementation hint: depending on the type of afield, you will want to
-     * construct an {@link IntAggregator} or {@link StringAggregator} to help
+     * construct an {@link IntegerAggregator} or {@link StringAggregator} to help
      * you with your implementation of readNext().
      * 
      * 
@@ -30,7 +37,38 @@ public class Aggregate extends Operator {
      *            The aggregation operator to use
      */
     public Aggregate(DbIterator child, int afield, int gfield, Aggregator.Op aop) {
-	// some code goes here
+        this.child = child;
+        this.aField = afield;
+        this.gField = gfield;
+        TupleDesc tmpChildTD = this.child.getTupleDesc();
+        this.aFieldType = tmpChildTD.getFieldType(this.aField);
+
+        // appLabel is used in the precalc-ed merged Tuple Desc.
+        String aggLabel = String.format("%s(%s)", aop.toString(),
+                tmpChildTD.getFieldName(this.aField));
+
+        // tpType and tpLabel is used to generate merged tp.
+        Type [] tpType;
+        String [] tpLabel;
+
+        if (this.gField != Aggregator.NO_GROUPING) {
+            this.gFieldType = tmpChildTD.getFieldType(this.gField);
+            tpType = new Type[2];
+            tpType[0] = this.gFieldType;
+            tpType[1] = this.aFieldType;
+            tpLabel = new String[2];
+            tpLabel[0] = tmpChildTD.getFieldName(this.gField);
+            tpLabel[1] = aggLabel;
+        } else {
+            this.gFieldType = null;
+            tpType = new Type[1];
+            tpType[0] = this.aFieldType;
+            tpLabel = new String[1];
+            tpLabel[0] = aggLabel;
+        }
+
+        this.op = aop;
+        this.mergedTp = new TupleDesc(tpType, tpLabel);
     }
 
     /**
@@ -39,8 +77,7 @@ public class Aggregate extends Operator {
      *         {@link simpledb.Aggregator#NO_GROUPING}
      * */
     public int groupField() {
-	// some code goes here
-	return -1;
+        return this.gField;
     }
 
     /**
@@ -49,16 +86,18 @@ public class Aggregate extends Operator {
      *         null;
      * */
     public String groupFieldName() {
-	// some code goes here
-	return null;
+        if (this.gField != Aggregator.NO_GROUPING) {
+            return this.child.getTupleDesc().getFieldName(this.gField);
+        } else {
+            return null;
+        }
     }
 
     /**
      * @return the aggregate field
      * */
     public int aggregateField() {
-	// some code goes here
-	return -1;
+        return this.aField;
     }
 
     /**
@@ -66,16 +105,17 @@ public class Aggregate extends Operator {
      *         tuples
      * */
     public String aggregateFieldName() {
-	// some code goes here
-	return null;
+        TupleDesc td = this.child.getTupleDesc();
+        assert(this.aField >= 0);
+        assert(this.aField < td.numFields());
+        return td.getFieldName(this.aField);
     }
 
     /**
      * @return return the aggregate operator
      * */
     public Aggregator.Op aggregateOp() {
-	// some code goes here
-	return null;
+        return this.op;
     }
 
     public static String nameOfAggregatorOp(Aggregator.Op aop) {
@@ -84,7 +124,19 @@ public class Aggregate extends Operator {
 
     public void open() throws NoSuchElementException, DbException,
 	    TransactionAbortedException {
-	// some code goes here
+        this.child.open();
+        Aggregator agg;
+        if (this.aFieldType == Type.INT_TYPE) {
+            agg = new IntegerAggregator(this.gField, this.gFieldType, this.aField, this.op);
+        } else {
+            agg = new StringAggregator(this.gField, this.gFieldType, this.aField, this.op);
+        }
+        while (this.child.hasNext()) {
+            agg.mergeTupleIntoGroup(this.child.next());
+        }
+        this.aggrIter = agg.iterator();
+        this.aggrIter.open();
+	    super.open();
     }
 
     /**
@@ -95,12 +147,19 @@ public class Aggregate extends Operator {
      * aggregate. Should return null if there are no more tuples.
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-	// some code goes here
-	return null;
+        if (this.aggrIter != null && this.aggrIter.hasNext()) {
+            return this.aggrIter.next();
+        }
+	    return null;
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-	// some code goes here
+        if (this.aggrIter != null) {
+            this.aggrIter.rewind();
+        } else {
+            this.close();
+            this.open();
+        }
     }
 
     /**
@@ -115,12 +174,13 @@ public class Aggregate extends Operator {
      * iterator.
      */
     public TupleDesc getTupleDesc() {
-	// some code goes here
-	return null;
+        return this.mergedTp;
     }
 
     public void close() {
-	// some code goes here
+        this.child.close();
+        this.aggrIter = null;
+        super.close();
     }
 
     @Override
