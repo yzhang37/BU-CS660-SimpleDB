@@ -103,6 +103,9 @@ public class HeapPage implements Page {
         }
         // now we handle the final header byte, which might not be full.
         int lastByteNum = this.header[i] & 0xFF, final_left = this.numSlots % 8;
+        if (i >= this.header.length - 1 && final_left == 0) {
+            final_left = 8;
+        }
         while (final_left > 0 && lastByteNum != 0) {
             if ((lastByteNum & 1) != 0)
                 used_count++;
