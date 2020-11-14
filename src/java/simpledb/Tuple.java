@@ -102,6 +102,26 @@ public class Tuple implements Serializable {
         return joiner.toString();
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o)
+            return true;
+        else {
+            if (o instanceof Tuple) {
+                Tuple tO = (Tuple)o;
+                if (tO.getTupleDesc().equals(this.getTupleDesc())) {
+                    for (int i = 0; i < this.getTupleDesc().numFields(); ++i) {
+                        if (!this.getField(i).equals(tO.getField(i))) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * @return
      *        An iterator which iterates over all the fields of this tuple

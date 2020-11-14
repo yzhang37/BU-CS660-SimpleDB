@@ -108,7 +108,7 @@ public class HeapFile implements DbFile {
         //   perms sent.
         // * we first try to find exists non-full pages.
         for (int i = 0; i < this.numPages(); ++i) {
-            Page page = Database.getBufferPool().getPage(tid, new HeapPageId(this.getId(), i), null);
+            Page page = Database.getBufferPool().getPage(tid, new HeapPageId(this.getId(), i), Permissions.READ_WRITE);
             if (!(page instanceof HeapPage)) {
                 throw new DbException("Not a HeapPage, but this shouldn't happen!");
             }
@@ -130,7 +130,7 @@ public class HeapFile implements DbFile {
         HeapPage newHpPage = new HeapPage(newHpPgId, newPageData);
         this.writePage(newHpPage);
         // now we try to use the getPage function from BufferPool to load the new page into it.
-        HeapPage newPage = (HeapPage)Database.getBufferPool().getPage(tid, newHpPgId, null);
+        HeapPage newPage = (HeapPage)Database.getBufferPool().getPage(tid, newHpPgId, Permissions.READ_WRITE);
         // here if DbException still throws, there must be some error
         // that this function cannot handle.
         newPage.insertTuple(t);
@@ -143,7 +143,7 @@ public class HeapFile implements DbFile {
             TransactionAbortedException {
         ArrayList<Page> ret_list = new ArrayList<>();
         for (int i = 0; i < this.numPages(); ++i) {
-            Page page = Database.getBufferPool().getPage(tid, new HeapPageId(this.getId(), i), null);
+            Page page = Database.getBufferPool().getPage(tid, new HeapPageId(this.getId(), i), Permissions.READ_WRITE);
             if (!(page instanceof HeapPage)) {
                 throw new DbException("Not a HeapPage, but this shouldn't happen!");
             }
