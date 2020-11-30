@@ -59,6 +59,12 @@ public class TableStats {
         System.out.println("Done.");
     }
 
+    private final int baseTups;
+    private final int basePages;
+    private final int costPerPageIO;
+    private final Object[] histograms;
+    private final int[] maxs, mins;
+    private final TupleDesc td;
     /**
      * Number of bins for the histogram. Feel free to increase this value over
      * 100, though our tests assume that you have at least 100 bins in your
@@ -84,7 +90,85 @@ public class TableStats {
         // You should try to do this reasonably efficiently, but you don't
         // necessarily have to (for example) do everything
         // in a single scan of the table.
-        // some code goes here
+        DbFile f = Database.getCatalog().getDatabaseFile(tableid);
+        td = f.getTupleDesc();
+
+        if (!(f instanceof HeapFile)) {
+            basePages = 0;
+            baseTups = 0;
+            this.costPerPageIO=ioCostPerPage;
+            histograms=null;
+            mins=maxs=null;
+            return;
+        }
+
+        costPerPageIO = ioCostPerPage;
+        histograms = new Object[td.numFields()];
+        maxs = new int[td.numFields()];
+        mins = new int[td.numFields()];
+        for (int i = 0; i < td.numFields(); i++) {
+            maxs[i] = Integer.MIN_VALUE;
+            mins[i] = Integer.MAX_VALUE;
+        }
+        // scan the data once to determine the min and max valus
+        try {
+            Transaction t = new Transaction();
+            t.start();
+            SeqScan s = new SeqScan(t.getId(), tableid, "t");
+            s.open();
+            while (s.hasNext()) {
+                Tuple tup = s.next();
+                for (int i = 0; i < td.numFields(); i++) {
+                    if (td.getFieldType(i) == Type.INT_TYPE) {
+                        int v = ((IntField) tup.getField(i)).getValue();
+                        if (v > maxs[i])
+                            maxs[i] = v;
+                        if (v < mins[i])
+                            mins[i] = v;
+                    }
+                }
+            }
+            t.commit();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        for (int i = 0; i < td.numFields(); i++) {
+            if (td.getFieldType(i) == Type.INT_TYPE) {
+                histograms[i] = new IntHistogram(NUM_HIST_BINS, mins[i],
+                        maxs[i]);
+            } else {
+                histograms[i] = new StringHistogram(NUM_HIST_BINS);
+            }
+        }
+
+        basePages = ((HeapFile) f).numPages();
+        int count = 0;
+        try {
+            Transaction t = new Transaction();
+            t.start();
+            SeqScan s = new SeqScan(t.getId(), tableid, "t");
+            s.open();
+            while (s.hasNext()) { // scan again to populate histograms
+                Tuple tup = s.next();
+                count++;
+                for (int i = 0; i < td.numFields(); i++) {
+                    if (td.getFieldType(i) == Type.INT_TYPE) {
+                        int v = ((IntField) tup.getField(i)).getValue();
+                        ((IntHistogram) histograms[i]).addValue(v);
+                    } else {
+                        String v = ((StringField) tup.getField(i)).getValue();
+                        ((StringHistogram) histograms[i]).addValue(v);
+                    }
+                }
+
+            }
+            t.commit();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        baseTups = count;
     }
 
     /**
@@ -101,7 +185,8 @@ public class TableStats {
      */
     public double estimateScanCost() {
         // some code goes here
-        return 0;
+        return basePages * costPerPageIO;
+        //return 0;
     }
 
     /**
@@ -115,7 +200,8 @@ public class TableStats {
      */
     public int estimateTableCardinality(double selectivityFactor) {
         // some code goes here
-        return 0;
+        return (int) (baseTups * selectivityFactor);
+        //return 0;
     }
 
     /**
@@ -130,7 +216,17 @@ public class TableStats {
      * */
     public double avgSelectivity(int field, Predicate.Op op) {
         // some code goes here
-        return 1.0;
+        if (op == Predicate.Op.EQUALS) {
+            if (this.histograms != null)
+                if (td.getFieldType(field) == Type.INT_TYPE) {
+                    return ((IntHistogram) this.histograms[field])
+                            .avgSelectivity();
+                } else if (td.getFieldType(field) == Type.STRING_TYPE) {
+                    return ((StringHistogram) this.histograms[field])
+                            .avgSelectivity();
+                }
+        }
+        return 1.0; // make something up
     }
 
     /**
@@ -147,8 +243,25 @@ public class TableStats {
      *         predicate
      */
     public double estimateSelectivity(int field, Predicate.Op op, Field constant) {
-        // some code goes here
-        return 1.0;
+        if (histograms != null) {
+            if (td.getFieldType(field) == Type.INT_TYPE) {
+                IntHistogram hist = (IntHistogram) histograms[field];
+                double sel = hist.estimateSelectivity(op,
+                        ((IntField) constant).getValue());
+//                System.out.println("SELECTIVITY OF PREDICATE " + field + " "
+//                        + op + " " + constant + " IS " + sel);
+                return sel;
+            } else {
+                StringHistogram hist = (StringHistogram) histograms[field];
+                double sel = hist.estimateSelectivity(op,
+                        ((StringField) constant).getValue());
+//                System.out.println("SELECTIVITY OF PREDICATE " + field + " "
+//                        + op + " " + constant + " IS " + sel);
+
+                return sel;
+            }
+        }
+        return 1.0; // make something up.
     }
 
     /**
@@ -156,7 +269,8 @@ public class TableStats {
      * */
     public int totalTuples() {
         // some code goes here
-        return 0;
+        return this.baseTups;
+    
     }
 
 }
